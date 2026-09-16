@@ -85,28 +85,27 @@ function baseFilename(): string {
   return template.value?.name.trim() || 'template'
 }
 
-async function exportJson(): Promise<void> {
+function exportJson(): void {
   if (!template.value)
     return
 
   const json = exportTemplate(template.value)
-
-  // Keep the existing download behaviour, but also put the exact same JSON
-  // into the clipboard so it can immediately be pasted into an issue, editor,
-  // API request, etc.
   downloadBlob(
     new Blob([json], { type: 'application/json' }),
     `${baseFilename()}.json`,
   )
+}
+
+async function copyJson(): Promise<void> {
+  if (!template.value)
+    return
 
   try {
-    await navigator.clipboard.writeText(json)
-    toast.add({ title: 'Template JSON downloaded and copied', color: 'success' })
+    await navigator.clipboard.writeText(exportTemplate(template.value))
+    toast.add({ title: 'Template JSON copied', color: 'success' })
   }
   catch {
-    // Clipboard permissions can be unavailable in some browser contexts. The
-    // download has already succeeded, so don't report the whole export as a failure.
-    toast.add({ title: 'Template JSON downloaded', description: 'Could not copy JSON to clipboard.', color: 'warning' })
+    toast.add({ title: 'Could not copy JSON to clipboard.', color: 'warning' })
   }
 }
 
@@ -251,7 +250,8 @@ async function onDrop(event: DragEvent): Promise<void> {
             :items="[
               { label: 'PNG (300 DPI)', icon: 'i-lucide-image', onSelect: () => exportFile('png') },
               { label: 'PDF', icon: 'i-lucide-file-text', onSelect: () => exportFile('pdf') },
-              { label: 'JSON (download + copy)', icon: 'i-lucide-braces', onSelect: () => exportJson() },
+              { label: 'JSON (download)', icon: 'i-lucide-download', onSelect: () => exportJson() },
+              { label: 'JSON (copy)', icon: 'i-lucide-copy', onSelect: () => copyJson() },
             ]"
           >
             <UButton
