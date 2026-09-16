@@ -143,18 +143,7 @@ async function importJsonFile(file: File): Promise<void> {
   }
 
   try {
-    const imported = importTemplate(await file.text())
-    // Keep the current record identity so the import lands in this template.
-    imported.id = template.value.id
-    // Drop any pending autosave of the pre-import document - it would
-    // otherwise overwrite the import moments later.
-    if (saveTimer) {
-      clearTimeout(saveTimer)
-      saveTimer = null
-    }
-    template.value = imported
-    await repo.save(imported)
-    toast.add({ title: 'Template imported', color: 'success' })
+    await importJsonText(await file.text())
   }
   catch (error) {
     toast.add({
@@ -165,12 +154,49 @@ async function importJsonFile(file: File): Promise<void> {
   }
 }
 
+async function importJsonText(json: string): Promise<void> {
+  if (!template.value)
+    return
+
+  const imported = importTemplate(json)
+  // Keep the current record identity so the import lands in this template.
+  imported.id = template.value.id
+  // Drop any pending autosave of the pre-import document - it would
+  // otherwise overwrite the import moments later.
+  if (saveTimer) {
+    clearTimeout(saveTimer)
+    saveTimer = null
+  }
+  template.value = imported
+  await repo.save(imported)
+  toast.add({ title: 'Template imported', color: 'success' })
+}
+
 async function importJson(event: Event): Promise<void> {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
   input.value = ''
   if (file)
     await importJsonFile(file)
+}
+
+async function onPaste(event: ClipboardEvent): Promise<void> {
+  const text = event.clipboardData?.getData('text/plain')?.trim()
+  if (!text || !template.value)
+    return
+
+  // Only intercept paste when the clipboard contains a valid print template.
+  // Normal text paste inside editor controls continues to work as usual.
+  try {
+    const parsed = JSON.parse(text)
+    if (!parsed || typeof parsed !== 'object')
+      return
+    event.preventDefault()
+    await importJsonText(text)
+  }
+  catch {
+    // Not template JSON: leave the normal paste behavior untouched.
+  }
 }
 
 function hasFiles(event: DragEvent): boolean {
@@ -222,6 +248,7 @@ async function onDrop(event: DragEvent): Promise<void> {
     @dragover="onDragOver"
     @dragleave="onDragLeave"
     @drop="onDrop"
+    @paste="onPaste"
   >
     <div
       v-if="notFound"
