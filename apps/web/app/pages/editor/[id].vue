@@ -16,6 +16,8 @@ const { locale } = useAppLocale()
 const template = ref<TemplateDocument | null>(null)
 const notFound = ref(false)
 const saving = ref(false)
+const isDraggingFile = ref(false)
+let dragDepth = 0
 
 async function load(id: string): Promise<void> {
   const record = await repo.get(id)
@@ -83,13 +85,29 @@ function baseFilename(): string {
   return template.value?.name.trim() || 'template'
 }
 
-function exportJson(): void {
+async function exportJson(): Promise<void> {
   if (!template.value)
     return
+
+  const json = exportTemplate(template.value)
+
+  // Keep the existing download behaviour, but also put the exact same JSON
+  // into the clipboard so it can immediately be pasted into an issue, editor,
+  // API request, etc.
   downloadBlob(
-    new Blob([exportTemplate(template.value)], { type: 'application/json' }),
+    new Blob([json], { type: 'application/json' }),
     `${baseFilename()}.json`,
   )
+
+  try {
+    await navigator.clipboard.writeText(json)
+    toast.add({ title: 'Template JSON downloaded and copied', color: 'success' })
+  }
+  catch {
+    // Clipboard permissions can be unavailable in some browser contexts. The
+    // download has already succeeded, so don't report the whole export as a failure.
+    toast.add({ title: 'Template JSON downloaded', description: 'Could not copy JSON to clipboard.', color: 'warning' })
+  }
 }
 
 const exporting = ref(false)
@@ -116,12 +134,15 @@ async function exportFile(kind: 'png' | 'pdf'): Promise<void> {
   }
 }
 
-async function importJson(event: Event): Promise<void> {
-  const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
-  input.value = ''
-  if (!file || !template.value)
+async function importJsonFile(file: File): Promise<void> {
+  if (!template.value)
     return
+
+  if (file.type && file.type !== 'application/json' && !file.name.toLowerCase().endsWith('.json')) {
+    toast.add({ title: 'Import failed', description: 'Please drop a JSON template file.', color: 'error' })
+    return
+  }
+
   try {
     const imported = importTemplate(await file.text())
     // Keep the current record identity so the import lands in this template.
@@ -144,10 +165,65 @@ async function importJson(event: Event): Promise<void> {
     })
   }
 }
+
+async function importJson(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (file)
+    await importJsonFile(file)
+}
+
+function hasFiles(event: DragEvent): boolean {
+  return Array.from(event.dataTransfer?.types ?? []).includes('Files')
+}
+
+function onDragEnter(event: DragEvent): void {
+  if (!hasFiles(event))
+    return
+  event.preventDefault()
+  dragDepth++
+  isDraggingFile.value = true
+}
+
+function onDragOver(event: DragEvent): void {
+  if (!hasFiles(event))
+    return
+  event.preventDefault()
+  event.dataTransfer!.dropEffect = 'copy'
+}
+
+function onDragLeave(event: DragEvent): void {
+  if (!hasFiles(event))
+    return
+  event.preventDefault()
+  dragDepth = Math.max(0, dragDepth - 1)
+  if (dragDepth === 0)
+    isDraggingFile.value = false
+}
+
+async function onDrop(event: DragEvent): Promise<void> {
+  if (!hasFiles(event))
+    return
+  event.preventDefault()
+  event.stopPropagation()
+  dragDepth = 0
+  isDraggingFile.value = false
+
+  const file = event.dataTransfer?.files?.[0]
+  if (file)
+    await importJsonFile(file)
+}
 </script>
 
 <template>
-  <div class="h-screen">
+  <div
+    class="relative h-screen"
+    @dragenter="onDragEnter"
+    @dragover="onDragOver"
+    @dragleave="onDragLeave"
+    @drop="onDrop"
+  >
     <div
       v-if="notFound"
       class="flex h-full flex-col items-center justify-center gap-4"
@@ -175,7 +251,7 @@ async function importJson(event: Event): Promise<void> {
             :items="[
               { label: 'PNG (300 DPI)', icon: 'i-lucide-image', onSelect: () => exportFile('png') },
               { label: 'PDF', icon: 'i-lucide-file-text', onSelect: () => exportFile('pdf') },
-              { label: 'JSON (template)', icon: 'i-lucide-braces', onSelect: () => exportJson() },
+              { label: 'JSON (download + copy)', icon: 'i-lucide-braces', onSelect: () => exportJson() },
             ]"
           >
             <UButton
@@ -206,6 +282,7 @@ async function importJson(event: Event): Promise<void> {
           </label>
         </template>
       </PrintDesigner>
+
       <div
         v-else
         class="flex h-full items-center justify-center text-muted"
@@ -213,5 +290,19 @@ async function importJson(event: Event): Promise<void> {
         Loading editor…
       </div>
     </ClientOnly>
+
+    <div
+      v-if="isDraggingFile"
+      class="pointer-events-none absolute inset-3 z-50 flex items-center justify-center rounded-2xl border-2 border-dashed border-accent-500 bg-accent-soft/80 backdrop-blur-[2px]"
+    >
+      <div class="rounded-xl border border-accent-500 bg-app-panel px-6 py-4 text-center shadow-lg">
+        <div class="text-sm font-semibold">
+          Drop template JSON here
+        </div>
+        <div class="mt-1 text-xs text-app-text2">
+          The dropped template will replace the current design
+        </div>
+      </div>
+    </div>
   </div>
 </template>
